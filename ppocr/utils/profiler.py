@@ -32,6 +32,7 @@ class ProfilerOptions(object):
       "batch_range=[50, 60]; profile_path=model.profile"
       "batch_range=[50, 60]; tracer_option=OpDetail; profile_path=model.profile"
     ProfilerOptions supports following key-value pair:
+      profile_type     - a string, the optional values are 'native', 'nsys'.
       batch_range      - a integer list, e.g. [100, 110].
       state            - a string, the optional values are 'CPU', 'GPU' or 'All'. 
       sorted_key       - a string, the optional values are 'calls', 'total',
@@ -47,6 +48,7 @@ class ProfilerOptions(object):
         assert isinstance(options_str, str)
 
         self._options = {
+            'profile_type': 'native',
             'batch_range': [10, 20],
             'state': 'All',
             'sorted_key': 'total',
@@ -68,7 +70,7 @@ class ProfilerOptions(object):
             elif key == 'exit_on_finished':
                 self._options[key] = value.lower() in ("yes", "true", "t", "1")
             elif key in [
-                    'state', 'sorted_key', 'tracer_option', 'profile_path'
+                    'profile_type', 'state', 'sorted_key', 'tracer_option', 'profile_path'
             ]:
                 self._options[key] = value
 
@@ -98,13 +100,28 @@ def add_profiler_step(options_str=None):
     if _profiler_options is None:
         _profiler_options = ProfilerOptions(options_str)
 
+    profile_type = _profiler_options['profile_type']
     if _profiler_step_id == _profiler_options['batch_range'][0]:
-        paddle.utils.profiler.start_profiler(
-            _profiler_options['state'], _profiler_options['tracer_option'])
-    elif _profiler_step_id == _profiler_options['batch_range'][1]:
-        paddle.utils.profiler.stop_profiler(_profiler_options['sorted_key'],
-                                            _profiler_options['profile_path'])
-        if _profiler_options['exit_on_finished']:
-            sys.exit(0)
+        if profile_type == 'nsys':
+            paddle.fluid.core.nvprof_start()
+            paddle.fluid.core.nvprof_enable_record_event()
+            paddle.fluid.core.nvprof_nvtx_push(str(_profiler_step_id))
+        else:
+            paddle.utils.profiler.start_profiler(
+                _profiler_options['state'], _profiler_options['tracer_option'])
+    else:
+        if _profiler_step_id == _profiler_options['batch_range'][1]:
+            if profile_type == 'nsys':
+                paddle.fluid.core.nvprof_nvtx_pop()
+                paddle.fluid.core.nvprof_stop()
+            else:
+                paddle.utils.profiler.stop_profiler(_profiler_options['sorted_key'],
+                                                    _profiler_options['profile_path'])
+            if _profiler_options['exit_on_finished']:
+                sys.exit(0)
+        else:
+            if profile_type == 'nsys':
+                paddle.fluid.core.nvprof_nvtx_pop()
+                paddle.fluid.core.nvprof_nvtx_push(str(_profiler_step_id))
 
     _profiler_step_id += 1
